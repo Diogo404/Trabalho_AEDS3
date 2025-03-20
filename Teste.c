@@ -5,6 +5,13 @@
 
 #define MAX_LINE_LENGTH 1024
 
+struct Registro {
+    int id;
+    char carro[255];
+    int ano;
+    char km[255];
+    int preco;
+};
 
 int ContaRegistros(char filename[]){
     FILE *ArquivoCsv = fopen(filename, "r");
@@ -27,10 +34,10 @@ int ContaRegistros(char filename[]){
 
 int RealizarCarga(char filename[MAX_LINE_LENGTH], int UltimoID){
     FILE *ArquivoCsv = fopen(filename, "r");
-    char line[MAX_LINE_LENGTH];
-    FILE *BaseDados = fopen("BaseDados.txt", "w");
+    char line[MAX_LINE_LENGTH], carro[255], km[255];
+    FILE *BaseDados = fopen("BaseDados.hex", "wb");
     unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)],  lapide = 0x00, RegistroBytes[sizeof(char)];
-    int LineLength;
+    int Tamanho, ano, preco, id, teste = 0;
 
     if (ArquivoCsv == NULL || BaseDados == NULL) {
         perror("Erro ao abrir o arquivo");
@@ -47,29 +54,72 @@ int RealizarCarga(char filename[MAX_LINE_LENGTH], int UltimoID){
     fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
 
     while (fgets(line, sizeof(line), ArquivoCsv)) {
-
         for(int i = 0; i<strlen(line); i++){
-            if(line[i] == ','){
-                line[i] = '|';
-            }else if(line[i] == '\n'){
-                line[i] = ';';
+            if(line[i] == '\n'){
+                line[i] = '\0';
             }
         }
+        char *token = strtok(line, ",");
+        id = atoi(token);
+        token = strtok(NULL, ",");
+        strcpy(carro, token);    
+        token = strtok(NULL, ",");
+        ano = atoi(token);
+        token = strtok(NULL, ",");
+        strcpy(km, token);
+        token = strtok(NULL, ",");
+        preco = atoi(token);
         //Insere a lapide
         fwrite(&lapide, sizeof(lapide), 1, BaseDados);
         //Insere o tamanho do registro
-        LineLength = strlen(line);
-        //printf("Tamanho do registro: %d\n", LineLength);
-        memcpy(IntBytes, &LineLength, sizeof(int));
+        Tamanho = sizeof(int) + sizeof(int) + strlen(carro) + sizeof(int) + sizeof(int) + strlen(km) + sizeof(int);
+        memcpy(IntBytes, &Tamanho, sizeof(int));
         for (int i = 0; i < sizeof(int); i++) {
             InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
         }
         fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-        //Insere o registro
-        for (int i = 0; i < LineLength; i++) {
-            memcpy(RegistroBytes, &line[i], sizeof(char));
+        //Insere o id
+        memcpy(IntBytes, &id, sizeof(int));
+        for (int i = 0; i < sizeof(int); i++) {
+            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        }
+        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        //Insere o tamanho do carro
+        Tamanho = strlen(carro);
+        memcpy(IntBytes, &Tamanho, sizeof(int));
+        for (int i = 0; i < sizeof(int); i++) {
+            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        }
+        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        //Insere o carro
+        for (int i = 0; i < strlen(carro); i++) {
+            memcpy(RegistroBytes, &carro[i], sizeof(char));
             fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
         }
+        //Insere o ano
+        memcpy(IntBytes, &ano, sizeof(int));
+        for (int i = 0; i < sizeof(int); i++) {
+            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        }
+        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        //Insere o tamanho do km
+        Tamanho = strlen(km);
+        memcpy(IntBytes, &Tamanho, sizeof(int));
+        for (int i = 0; i < sizeof(int); i++) {
+            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        }
+        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        //Insere o km
+        for (int i = 0; i < strlen(km); i++) {
+            memcpy(RegistroBytes, &km[i], sizeof(char));
+            fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+        }
+        //Insere o preco
+        memcpy(IntBytes, &preco, sizeof(int));
+        for (int i = 0; i < sizeof(int); i++) {
+            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        }
+        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
     }
 
     fclose(ArquivoCsv);
@@ -77,38 +127,232 @@ int RealizarCarga(char filename[MAX_LINE_LENGTH], int UltimoID){
     return EXIT_SUCCESS;
 }
 
-void InserirRegistro(char registro[MAX_LINE_LENGTH]){
-    FILE *BaseDados = fopen("BaseDados.txt", "r");
-    int UltimoID;
-    if (BaseDados == NULL) {
-        perror("Erro ao abrir o arquivo");
-        return;
-    }
-    unsigned char buffer[4];
-    size_t bytesRead = fread(buffer, sizeof(unsigned char), 4, BaseDados);
+void InserirRegistro(struct Registro carroRegistro){
+    FILE *BaseDados = fopen("BaseDados.hex", "rb+");
+    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[sizeof(char)];
+    int UltimoID, Tamanho;
+    size_t bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    
     // Inverter a ordem dos bytes lidos
-    unsigned char InvertedBuffer[4];
-    for (int i = 0; i < 4; i++) {
-        InvertedBuffer[i] = buffer[3 - i];
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
     }
-
-    memcpy(&UltimoID, InvertedBuffer, sizeof(int));
+    memcpy(&UltimoID, InverteIntBytes, sizeof(int));
     UltimoID++;
-    fclose(BaseDados);
+    carroRegistro.id = UltimoID;
+
+    fseek(BaseDados, 0, SEEK_SET);
+
+    memcpy(IntBytes, &UltimoID, sizeof(int));
+    // Inverter a ordem dos bytes
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    // Escrever os bytes invertidos no arquivo BaseDados
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+
     // Mover o ponteiro do arquivo para o final para adicionar o novo registro
-    //fseek(BaseDados, 0, SEEK_END);
-    //fwrite(registro, sizeof(char), strlen(registro), BaseDados);
+    fseek(BaseDados, 0, SEEK_END);
+    //Insere a lapide
+    fwrite(&lapide, sizeof(lapide), 1, BaseDados);
+
+    //Insere o tamanho do registro
+    Tamanho = sizeof(int) + sizeof(int) + strlen(carroRegistro.carro) + sizeof(int) + sizeof(int) + strlen(carroRegistro.km) + sizeof(int);
+    memcpy(IntBytes, &Tamanho, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o id
+    memcpy(IntBytes, &carroRegistro.id, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o tamanho do carro
+    Tamanho = strlen(carroRegistro.carro);
+    memcpy(IntBytes, &Tamanho, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o carro
+    for (int i = 0; i < strlen(carroRegistro.carro); i++) {
+        memcpy(RegistroBytes, &carroRegistro.carro[i], sizeof(char));
+        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+    }
+    //Insere o ano
+    memcpy(IntBytes, &carroRegistro.ano, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o tamanho do km
+    Tamanho = strlen(carroRegistro.km);
+    memcpy(IntBytes, &Tamanho, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o km
+    for (int i = 0; i < strlen(carroRegistro.km); i++) {
+        memcpy(RegistroBytes, &carroRegistro.km[i], sizeof(char));
+        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+    }
+    //Insere o preco
+    memcpy(IntBytes, &carroRegistro.preco, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+
+    fclose(BaseDados);
+}
+
+int BuscaRegistro(int id){
+    FILE *BaseDados = fopen("BaseDados.hex", "rb");
+    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[sizeof(char)];
+    int idRegistro = 0, UltimoID, Tamanho, posicao;
+
+    size_t bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    posicao = 4;
+    memcpy(&UltimoID, InverteIntBytes, sizeof(int));
+    while (idRegistro != UltimoID && idRegistro != id){
+        bytesRead = fread(&lapide, sizeof(lapide), 1, BaseDados);
+        bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+        for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+            InverteIntBytes[i] = IntBytes[3 - i];
+        }
+        posicao += 5;
+        memcpy(&Tamanho, InverteIntBytes, sizeof(int));
+        bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+        for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+            InverteIntBytes[i] = IntBytes[3 - i];
+        }
+        memcpy(&idRegistro, InverteIntBytes, sizeof(int));
+        if(idRegistro == id){
+            return posicao;
+        }else{
+            fseek(BaseDados, Tamanho-4, SEEK_CUR);
+            posicao += Tamanho;
+        }
+    }
+}
+
+void MostrarRegistro(int posicao){
+    FILE *BaseDados = fopen("BaseDados.hex", "rb");
+    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[255];
+    struct Registro carroRegistro;
+    int Tamanho;
+    fseek(BaseDados, posicao, SEEK_CUR);
+
+    size_t bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&carroRegistro.id, InverteIntBytes, sizeof(int));
+
+    fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&Tamanho, InverteIntBytes, sizeof(int));
+
+    bytesRead = fread(RegistroBytes, sizeof(unsigned char), Tamanho, BaseDados);
+    memcpy(&carroRegistro.carro, RegistroBytes, Tamanho);
+
+    bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&carroRegistro.ano, InverteIntBytes, sizeof(int));
+
+    bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&Tamanho, InverteIntBytes, sizeof(int));
+
+    bytesRead = fread(RegistroBytes, sizeof(unsigned char), Tamanho, BaseDados);
+    memcpy(&carroRegistro.km, RegistroBytes, Tamanho);
+
+    bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&carroRegistro.preco, InverteIntBytes, sizeof(int));
+    printf("ID: %d\n", carroRegistro.id);
+    printf("Carro: %s\n", carroRegistro.carro);
+    printf("Ano: %d\n", carroRegistro.ano);
+    printf("Km: %s\n", carroRegistro.km);
+    printf("Preco: %d\n", carroRegistro.preco);
+    fclose(BaseDados);
+}
+
+void AtualizarRegistro(int posicao, struct Registro carroRegistro){
+    FILE *BaseDados = fopen("BaseDados.hex", "rb+");
+    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[sizeof(char)];
+    int idRegistro = 0, UltimoID, Tamanho, posicao;
+
+    fseek(BaseDados, posicao+4, SEEK_SET);
+    fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&Tamanho, InverteIntBytes, sizeof(int));
+    carroRegistro.carro[strlen(carroRegistro.carro)] = '\0';
+    //Insere o carro
+    for (int i = 0; i < Tamanho; i++) {
+        memcpy(RegistroBytes, &carroRegistro.carro[i], sizeof(char));
+        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+    }
+    //Insere o ano
+    memcpy(IntBytes, &carroRegistro.ano, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Insere o tamanho do km
+    fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
+    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
+        InverteIntBytes[i] = IntBytes[3 - i];
+    }
+    memcpy(&Tamanho, InverteIntBytes, sizeof(int));
+    carroRegistro.km[strlen(carroRegistro.km)] = '\0';
+    //Insere o km
+    for (int i = 0; i < Tamanho; i++) {
+        memcpy(RegistroBytes, &carroRegistro.km[i], sizeof(char));
+        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+    }
+    //Insere o preco
+    memcpy(IntBytes, &carroRegistro.preco, sizeof(int));
+    for (int i = 0; i < sizeof(int); i++) {
+        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    }
+    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    fclose(BaseDados);
+}
+
+void ApagarRegistro(int posicao){
+    FILE *BaseDados = fopen("BaseDados.hex", "rb+");
+    unsigned char lapide = 0x01;
+    fseek(BaseDados, posicao-5, SEEK_SET);
+    fwrite(&lapide, sizeof(lapide), 1, BaseDados);
+    fclose(BaseDados);
 }
 
 int main() {
     setlocale(LC_ALL, "");
-    char filename[MAX_LINE_LENGTH];  // Nome do arquivo CSV
+    char filename[MAX_LINE_LENGTH], ano[255];  // Nome do arquivo CSV
     int opt = 1, BuscarId, LerIdDe, LerIdAte;
-    char carro[50], registro[MAX_LINE_LENGTH];
-    int ano, km, preco;
+    struct Registro carroRegistro;
 
     printf("Digite o nome do arquivo csv com a base de dados: \n");
     fgets(filename, sizeof(filename), stdin);
+    fflush(stdin);
     filename[strcspn(filename, "\n")] = 0; 
     RealizarCarga(filename, ContaRegistros(filename));
 
@@ -127,33 +371,59 @@ int main() {
                 break;
             case 1:
                 printf("Digite o nome do carro: \n");
-                scanf("%s", carro);
+                scanf("%s", &carroRegistro.carro);
+                fflush(stdin);
                 printf("Digite o ano do carro: \n");
-                scanf("%i", &ano);
+                scanf("%s", &ano);
+                strcat(ano, "0101");
+                carroRegistro.ano = atoi(ano);
+                fflush(stdin);
                 printf("Digite o km do carro: \n");
-                scanf("%i", &km);
+                scanf("%s", &carroRegistro.km);
+                fflush(stdin);
                 printf("Digite o preco do carro: \n");
-                scanf("%i", &preco);
-                snprintf(registro, sizeof(registro), "|%s|%d|%d|%d;", carro, ano, km, preco);
-                InserirRegistro(registro);
+                scanf("%d", &carroRegistro.preco);
+                fflush(stdin);
+
+                InserirRegistro(carroRegistro);
                 break;
             case 2:
                 printf("Digite o ID do registro que deseja ler: \n");
                 scanf("%d", &BuscarId);
+                MostrarRegistro(BuscaRegistro(BuscarId));
                 break;
             case 3:
                 printf("Digite o primeiro ID do registro que deseja ler: \n");
                 scanf("%d", &LerIdDe);
                 printf("Digite o último ID do registro que deseja ler: \n");
                 scanf("%d", &LerIdAte);
+                for(int i = LerIdDe; i<=LerIdAte; i++){
+                    MostrarRegistro(BuscaRegistro(i));
+                }
                 break;
             case 4:
                 printf("Digite o ID do registro que deseja atualizar: \n");
                 scanf("%d", &BuscarId);
+                printf("Digite o nome do carro: \n");
+                scanf("%s", &carroRegistro.carro);
+                fflush(stdin);
+                printf("Digite o ano do carro: \n");
+                scanf("%s", &ano);
+                strcat(ano, "0101");
+                carroRegistro.ano = atoi(ano);
+                fflush(stdin);
+                printf("Digite o km do carro: \n");
+                scanf("%s", &carroRegistro.km);
+                fflush(stdin);
+                printf("Digite o preco do carro: \n");
+                scanf("%d", &carroRegistro.preco);
+                fflush(stdin);
                 break;
             case 5:
                 printf("Digite o ID do registro que deseja deletar: \n");
                 scanf("%d", &BuscarId);
+                ApagarRegistro(BuscaRegistro(BuscarId));
+                printf("Registro deletado com sucesso\n");
                 break;
             default:
                 printf("Opção inválida\n");
