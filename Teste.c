@@ -1,23 +1,47 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <stdbool.h>
 #include <locale.h>
 
 #define MAX_LINE_LENGTH 1024
+const int endian = 1;
+
+//Função para verificar o Endianness do sistema
+bool is_bigendian(){
+    char *y = (char*)&endian;
+    return y;
+}
+
+//Função para tratar o Endianness do inteiro
+int reverseInt (int intRegistro) {
+    unsigned char c1, c2, c3, c4;
+
+    if (is_bigendian() == false) {
+        return intRegistro;
+    } else {
+        c1 = intRegistro & 255;
+        c2 = (intRegistro >> 8) & 255;
+        c3 = (intRegistro >> 16) & 255;
+        c4 = (intRegistro >> 24) & 255;
+
+        return ((int)c1 << 24) + ((int)c2 << 16) + ((int)c3 << 8) + c4;
+    }
+}
 
 struct Registro {
     //Struct com as informações do registro
     int id;
     char carro[255];
     int ano;
-    char km[255];
     int preco;
+    char combustivel[255];
 };
 
 bool ValidaLapide(int posicao){
     //Confere se o registro foi excluído "true" ou não "false"
-    FILE *BaseDados = fopen("BaseDados.hex", "rb");
+    FILE *BaseDados = fopen("BaseDados.db", "rb");
     unsigned char lapide;
     fseek(BaseDados, posicao, SEEK_SET);
     size_t bytesRead = fread(&lapide, sizeof(lapide), 1, BaseDados);
@@ -27,114 +51,125 @@ bool ValidaLapide(int posicao){
     return false;
 }
 
-int ContaRegistros(char filename[]){
-    //Conta as linhas do arquivo e encontra o ultimo ID. Usado apenas na carga inicial
-    FILE *ArquivoCsv = fopen(filename, "r");
-    char line[MAX_LINE_LENGTH];
-    int UltimoID = 0;
+//Realiza a carga inicial do arquivo CSV para o arquivo db
+int RealizarCarga(char filename[MAX_LINE_LENGTH]){
+    FILE *ArquivoCsv = fopen(filename, "r"); // Abre o arquivo CSV para leitura
+    char line[MAX_LINE_LENGTH], carro[MAX_LINE_LENGTH], combustivel[MAX_LINE_LENGTH], *token;
+    FILE *BaseDados = fopen("BaseDados.db", "wb"); // Abre o arquivo BaseDados para escrita
+    unsigned char lapide = 0x00, RegistroBytes[sizeof(char)];
+    uint32_t IntBytes;
+    int tamanho, id, ano, preco, qtdCombustivel = 1, UltimoID = 0;
 
-    if (ArquivoCsv == NULL) {
-        perror("Erro ao abrir o arquivo");
-        return EXIT_FAILURE;
-    }
-
-    while (fgets(line, sizeof(line), ArquivoCsv)) {
-        UltimoID++;
-    }
-
-    fclose(ArquivoCsv);
-    return UltimoID;
-}
-
-int RealizarCarga(char filename[MAX_LINE_LENGTH], int UltimoID){
-    //Realiza a carga inicial do arquivo CSV para o arquivo binário
-    FILE *ArquivoCsv = fopen(filename, "r");
-    char line[MAX_LINE_LENGTH], carro[255], km[255];
-    FILE *BaseDados = fopen("BaseDados.hex", "wb");
-    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)],  lapide = 0x00, RegistroBytes[sizeof(char)];
-    int Tamanho, ano, preco, id, teste = 0;
-
+    // Verifica se os arquivos foram abertos corretamente
     if (ArquivoCsv == NULL || BaseDados == NULL) {
         perror("Erro ao abrir o arquivo");
         return EXIT_FAILURE;
     }
 
-    // Copia os bytes do inteiro UltimoID para o array IntBytes
-    memcpy(IntBytes, &UltimoID, sizeof(int));
-    // Inverter a ordem dos bytes
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    // Escrever os bytes invertidos no arquivo BaseDados
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-
+    // Conta a quantidade de registros no arquivo CSV
     while (fgets(line, sizeof(line), ArquivoCsv)) {
+        UltimoID++;
+    }
+
+    // Volta o ponteiro do arquivo para o início
+    fseek(ArquivoCsv, 0, SEEK_SET);
+
+    //Resolve o problema relacionado ao Endianness do processador
+    UltimoID = reverseInt(UltimoID);
+
+    // Copia os bytes do inteiro UltimoID para o array IntBytes
+    memcpy(&IntBytes, &UltimoID, sizeof(int));
+
+    //Escreve os bytes do ultimoId no arquivo BaseDados
+    fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
+    // Lê cada linha do arquivo CSV e escreve no arquivo BaseDados
+    while (fgets(line, sizeof(line), ArquivoCsv)) {
+        // Remove o caractere de nova linha do final da linha lida
         for(int i = 0; i<strlen(line); i++){
             if(line[i] == '\n'){
                 line[i] = '\0';
             }
         }
-        char *token = strtok(line, ",");
-        id = atoi(token);
+
+        // Divide a linha em tokens usando a vírgula como delimitador e armazena os valores nas variáveis correspondentes
+        token = strtok(line, ",");
+            id = atoi(token);
         token = strtok(NULL, ",");
-        strcpy(carro, token);    
+            strcpy(carro, token);  
         token = strtok(NULL, ",");
-        ano = atoi(token);
+            ano = atoi(token);
         token = strtok(NULL, ",");
-        strcpy(km, token);
+            preco = atoi(token);
         token = strtok(NULL, ",");
-        preco = atoi(token);
+            strcpy(combustivel, token);
+
+        // Verifica se o veículo tem mais de um combustível
+        for(int i = 0; i<strlen(combustivel); i++){
+            if(combustivel[i] == '/'){
+                qtdCombustivel++;
+            }
+        }
+
         //Insere a lapide
         fwrite(&lapide, sizeof(lapide), 1, BaseDados);
+
+        //Tamanho do registro = id + qtdCarro + carro + ano + qtdCombustivel + tamanho do combustivel + combustivel + preco
+        tamanho = sizeof(int) + sizeof(int) + strlen(carro) + sizeof(int) + sizeof(int) + (sizeof(int) * qtdCombustivel) + (strlen(combustivel) - (qtdCombustivel - 1)) + sizeof(int);
+
         //Insere o tamanho do registro
-        Tamanho = sizeof(int) + sizeof(int) + strlen(carro) + sizeof(int) + sizeof(int) + strlen(km) + sizeof(int);
-        memcpy(IntBytes, &Tamanho, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-        }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        tamanho = reverseInt(tamanho);
+        memcpy(&IntBytes, &tamanho, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
         //Insere o id
-        memcpy(IntBytes, &id, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-        }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        id = reverseInt(id);
+        memcpy(&IntBytes, &id, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
         //Insere o tamanho do carro
-        Tamanho = strlen(carro);
-        memcpy(IntBytes, &Tamanho, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-        }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+        tamanho = strlen(carro);
+        tamanho = reverseInt(tamanho);
+        memcpy(&IntBytes, &tamanho, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
         //Insere o carro
         for (int i = 0; i < strlen(carro); i++) {
             memcpy(RegistroBytes, &carro[i], sizeof(char));
             fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
         }
+
         //Insere o ano
-        memcpy(IntBytes, &ano, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+        ano = reverseInt(ano);
+        memcpy(&IntBytes, &ano, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
+        //Insere a quantidade de combustiveis
+        qtdCombustivel = reverseInt(qtdCombustivel);
+        memcpy(&IntBytes, &qtdCombustivel, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
+        //Estrutura de repetição para inserir os combustiveis
+        for(int i = 0, j = 0; i < strlen(combustivel); i++){
+            if(combustivel[i] == '/' || (i + 1) == strlen(combustivel)){
+                tamanho = i + 1;
+                //Insere o tamanho do combustivel
+                tamanho = reverseInt(tamanho);
+                memcpy(&IntBytes, &tamanho, sizeof(int));
+                fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
+
+                //Insere o combustivel
+                for (; j <= i && combustivel[j] == '/'; j++) {
+                    memcpy(RegistroBytes, &combustivel[j], sizeof(char));
+                    fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+                }
+            }
         }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-        //Insere o tamanho do km
-        Tamanho = strlen(km);
-        memcpy(IntBytes, &Tamanho, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-        }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-        //Insere o km
-        for (int i = 0; i < strlen(km); i++) {
-            memcpy(RegistroBytes, &km[i], sizeof(char));
-            fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
-        }
-        //Insere o preco
-        memcpy(IntBytes, &preco, sizeof(int));
-        for (int i = 0; i < sizeof(int); i++) {
-            InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-        }
-        fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+
+        //Insere o preço
+        preco = reverseInt(preco);
+        memcpy(&IntBytes, &preco, sizeof(int));
+        fwrite(&IntBytes, sizeof(IntBytes), 1, BaseDados);
     }
 
     fclose(ArquivoCsv);
@@ -142,90 +177,92 @@ int RealizarCarga(char filename[MAX_LINE_LENGTH], int UltimoID){
     return EXIT_SUCCESS;
 }
 
+//Insere um novo registro no arquivo BaseDados
 void InserirRegistro(struct Registro carroRegistro){
-    FILE *BaseDados = fopen("BaseDados.hex", "rb+");
-    unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[sizeof(char)];
-    int UltimoID, Tamanho;
-    size_t bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
-    
-    // Inverter a ordem dos bytes lidos
-    for (int i = 0; i < sizeof(InverteIntBytes); i++) {
-        InverteIntBytes[i] = IntBytes[3 - i];
-    }
-    memcpy(&UltimoID, InverteIntBytes, sizeof(int));
-    UltimoID++;
-    carroRegistro.id = UltimoID;
+    FILE *baseDados = fopen("BaseDados.db", "rb+");
+    unsigned char lapide = 0x00, registroBytes[sizeof(char)];
+    uint32_t intBytes;
+    int ultimoId, tamanho, qtdCombustivel = 1;
 
-    fseek(BaseDados, 0, SEEK_SET);
+    //Le o último ID do arquivo BaseDados e incrementa para o novo registro
+    fread(&intBytes, sizeof(uint8_t), 4, baseDados);
+    memcpy(&ultimoId, &intBytes, sizeof(int));
+    ultimoId++;
+    carroRegistro.id = ultimoId;
 
-    memcpy(IntBytes, &UltimoID, sizeof(int));
-    // Inverter a ordem dos bytes
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    // Escrever os bytes invertidos no arquivo BaseDados
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    //Atualiza o último ID no arquivo BaseDados
+    fseek(baseDados, 0, SEEK_SET);
+    ultimoId = reverseInt(ultimoId);
+    memcpy(&intBytes, &ultimoId, sizeof(int));
+    fwrite(&intBytes, sizeof(uint8_t), 1, baseDados);
 
     // Mover o ponteiro do arquivo para o final para adicionar o novo registro
-    fseek(BaseDados, 0, SEEK_END);
-    //Insere a lapide
-    fwrite(&lapide, sizeof(lapide), 1, BaseDados);
+    fseek(baseDados, 0, SEEK_END);
 
-    //Insere o tamanho do registro
-    Tamanho = sizeof(int) + sizeof(int) + strlen(carroRegistro.carro) + sizeof(int) + sizeof(int) + strlen(carroRegistro.km) + sizeof(int);
-    memcpy(IntBytes, &Tamanho, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
+    //Insere a lapide
+    fwrite(&lapide, sizeof(lapide), 1, baseDados);
+
+    // Verifica se o veículo tem mais de um combustível
+    for(int i = 0; i<strlen(carroRegistro.combustivel); i++){
+        if(carroRegistro.combustivel[i] == '/'){
+            qtdCombustivel++;
+        }
     }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+
+    //Tamanho do registro = id + qtdCarro + carro + ano + qtdCombustivel + combustivel + preco
+    tamanho = sizeof(int) + sizeof(int) + strlen(carroRegistro.carro) + sizeof(int) + sizeof(int) + (sizeof(int) * qtdCombustivel) + (strlen(carroRegistro.combustivel) - (qtdCombustivel - 1)) + sizeof(int);
+    tamanho = reverseInt(tamanho);
+    memcpy(&intBytes, &tamanho, sizeof(int));
+    fwrite(&intBytes, sizeof(intBytes), 1, baseDados);
+    
     //Insere o id
-    memcpy(IntBytes, &carroRegistro.id, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    carroRegistro.id = reverseInt(carroRegistro.id);
+    memcpy(&intBytes, &carroRegistro.id, sizeof(int));
+
     //Insere o tamanho do carro
-    Tamanho = strlen(carroRegistro.carro);
-    memcpy(IntBytes, &Tamanho, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
+    tamanho = strlen(carroRegistro.carro);
+    tamanho = reverseInt(tamanho);
+    memcpy(&intBytes, &tamanho, sizeof(int));
+    fwrite(&intBytes, sizeof(intBytes), 1, baseDados);
+
     //Insere o carro
     for (int i = 0; i < strlen(carroRegistro.carro); i++) {
-        memcpy(RegistroBytes, &carroRegistro.carro[i], sizeof(char));
-        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
+        memcpy(registroBytes, &carroRegistro.carro[i], sizeof(char));
+        fwrite(registroBytes, sizeof(registroBytes), 1, baseDados);
     }
-    //Insere o ano
-    memcpy(IntBytes, &carroRegistro.ano, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-    //Insere o tamanho do km
-    Tamanho = strlen(carroRegistro.km);
-    memcpy(IntBytes, &Tamanho, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
-    //Insere o km
-    for (int i = 0; i < strlen(carroRegistro.km); i++) {
-        memcpy(RegistroBytes, &carroRegistro.km[i], sizeof(char));
-        fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
-    }
-    //Insere o preco
-    memcpy(IntBytes, &carroRegistro.preco, sizeof(int));
-    for (int i = 0; i < sizeof(int); i++) {
-        InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
-    }
-    fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
 
-    fclose(BaseDados);
+    //Insere o ano
+    carroRegistro.ano = reverseInt(carroRegistro.ano);
+    memcpy(&intBytes, &carroRegistro.ano, sizeof(int));
+    fwrite(&intBytes, sizeof(intBytes), 1, baseDados);
+
+    //Estrutura de repetição para inserir os combustiveis
+    for(int i = 0, j = 0; i < strlen(carroRegistro.combustivel); i++){
+        if(carroRegistro.combustivel[i] == '/' || (i + 1) == strlen(carroRegistro.combustivel)){
+            tamanho = i + 1;
+            //Insere o tamanho do combustivel
+            tamanho = reverseInt(tamanho);
+            memcpy(&intBytes, &tamanho, sizeof(int));
+            fwrite(&intBytes, sizeof(intBytes), 1, baseDados);
+
+            //Insere o combustivel
+            for (; j <= i && carroRegistro.combustivel[j] == '/'; j++) {
+                memcpy(registroBytes, &carroRegistro.combustivel[j], sizeof(char));
+                fwrite(registroBytes, sizeof(registroBytes), 1, baseDados);                
+            }
+        }
+    }
+
+    //Insere o preco
+    carroRegistro.preco = reverseInt(carroRegistro.preco);
+    memcpy(&intBytes, &carroRegistro.preco, sizeof(int));
+    fwrite(&intBytes, sizeof(intBytes), 1, baseDados);
+
+    fclose(baseDados);
 }
 
 int BuscaRegistro(int id){
-    FILE *BaseDados = fopen("BaseDados.hex", "rb");
+    FILE *BaseDados = fopen("BaseDados.db", "rb");
     unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[sizeof(char)];
     int idRegistro = 0, UltimoID, Tamanho, posicao;
 
@@ -258,7 +295,7 @@ int BuscaRegistro(int id){
 }
 
 void MostrarRegistro(int posicao){
-    FILE *BaseDados = fopen("BaseDados.hex", "rb");
+    FILE *BaseDados = fopen("BaseDados.db", "rb");
     unsigned char IntBytes[sizeof(int)], InverteIntBytes[sizeof(int)], lapide = 0x00, RegistroBytes[255];
     struct Registro carroRegistro;
     int Tamanho;
@@ -294,7 +331,7 @@ void MostrarRegistro(int posicao){
         memcpy(&Tamanho, InverteIntBytes, sizeof(int));
 
         bytesRead = fread(RegistroBytes, sizeof(unsigned char), Tamanho, BaseDados);
-        memcpy(&carroRegistro.km, RegistroBytes, Tamanho);
+        memcpy(&carroRegistro.combustivel, RegistroBytes, Tamanho);
 
         bytesRead = fread(IntBytes, sizeof(unsigned char), 4, BaseDados);
         for (int i = 0; i < sizeof(InverteIntBytes); i++) {
@@ -304,7 +341,7 @@ void MostrarRegistro(int posicao){
         printf("ID: %d\n", carroRegistro.id);
         printf("Carro: %s\n", carroRegistro.carro);
         printf("Ano: %d\n", carroRegistro.ano);
-        printf("Km: %s\n", carroRegistro.km);
+        printf("Km: %s\n", carroRegistro.combustivel);
         printf("Preco: %d\n", carroRegistro.preco);
     }
     fclose(BaseDados);
@@ -334,12 +371,12 @@ bool RegistroExcedeChar(int posicao, struct Registro *carroRegistro){
             carroRegistro->carro[i] = ' ';
         }
     }
-    if(strlen(carroRegistro->km) < TamanhoKm){
-        for(int i = strlen(carroRegistro->km); i<TamanhoKm; i++){
-            carroRegistro->km[i] = ' ';
+    if(strlen(carroRegistro->combustivel) < TamanhoKm){
+        for(int i = strlen(carroRegistro->combustivel); i<TamanhoKm; i++){
+            carroRegistro->combustivel[i] = ' ';
         }
     }
-    if(TamanhoCarro < strlen(carroRegistro->carro) || TamanhoKm < strlen(carroRegistro->km)){
+    if(TamanhoCarro < strlen(carroRegistro->carro) || TamanhoKm < strlen(carroRegistro->combustivel)){
         return true;
     }
     return false;
@@ -371,7 +408,7 @@ void AtualizarRegistro(int posicao, struct Registro carroRegistro){
         //Insere a lapide
         fwrite(&lapide, sizeof(lapide), 1, BaseDados);
         //Insere o tamanho do registro
-        Tamanho = sizeof(int) + sizeof(int) + strlen(carroRegistro.carro) + sizeof(int) + sizeof(int) + strlen(carroRegistro.km) + sizeof(int);
+        Tamanho = sizeof(int) + sizeof(int) + strlen(carroRegistro.carro) + sizeof(int) + sizeof(int) + strlen(carroRegistro.combustivel) + sizeof(int);
         memcpy(IntBytes, &Tamanho, sizeof(int));
         for (int i = 0; i < sizeof(int); i++) {
             InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
@@ -402,15 +439,15 @@ void AtualizarRegistro(int posicao, struct Registro carroRegistro){
         }
         fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
         //Insere o tamanho do km
-        Tamanho = strlen(carroRegistro.km);
+        Tamanho = strlen(carroRegistro.combustivel);
         memcpy(IntBytes, &Tamanho, sizeof(int));
         for (int i = 0; i < sizeof(int); i++) {
             InverteIntBytes[i] = IntBytes[sizeof(int) - 1 - i];
         }
         fwrite(InverteIntBytes, sizeof(InverteIntBytes), 1, BaseDados);
         //Insere o km
-        for (int i = 0; i < strlen(carroRegistro.km); i++) {
-            memcpy(RegistroBytes, &carroRegistro.km[i], sizeof(char));
+        for (int i = 0; i < strlen(carroRegistro.combustivel); i++) {
+            memcpy(RegistroBytes, &carroRegistro.combustivel[i], sizeof(char));
             fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
         }
         //Insere o preco
@@ -437,7 +474,7 @@ void AtualizarRegistro(int posicao, struct Registro carroRegistro){
     fseek(BaseDados, 4, SEEK_CUR);
     //Insere o km
     for (int i = 0; i < Tamanho; i++) {
-        memcpy(RegistroBytes, &carroRegistro.km[i], sizeof(char));
+        memcpy(RegistroBytes, &carroRegistro.combustivel[i], sizeof(char));
         fwrite(RegistroBytes, sizeof(RegistroBytes), 1, BaseDados);
     }
     //Insere o preco
@@ -453,7 +490,7 @@ void AtualizarRegistro(int posicao, struct Registro carroRegistro){
 
 int main() {
     setlocale(LC_ALL, "");
-    char filename[MAX_LINE_LENGTH], ano[255];  // Nome do arquivo CSV
+    char filename[MAX_LINE_LENGTH], ano[255];
     int opt = 1, BuscarId, LerIdDe, LerIdAte;
     struct Registro carroRegistro;
 
@@ -461,7 +498,7 @@ int main() {
     fgets(filename, sizeof(filename), stdin);
     fflush(stdin);
     filename[strcspn(filename, "\n")] = 0; 
-    RealizarCarga(filename, ContaRegistros(filename));
+    RealizarCarga(filename);
 
     while(opt != 0){
         printf("Selecione a opção: \n");
@@ -485,8 +522,8 @@ int main() {
                 strcat(ano, "0101");
                 carroRegistro.ano = atoi(ano);
                 fflush(stdin);
-                printf("Digite o km do carro: \n");
-                scanf("%s", &carroRegistro.km);
+                printf("Digite o combustível do carro: \n");
+                scanf("%s", &carroRegistro.combustivel);
                 fflush(stdin);
                 printf("Digite o preco do carro: \n");
                 scanf("%d", &carroRegistro.preco);
@@ -519,8 +556,8 @@ int main() {
                 strcat(ano, "0101");
                 carroRegistro.ano = atoi(ano);
                 fflush(stdin);
-                printf("Digite o km do carro: \n");
-                scanf("%s", &carroRegistro.km);
+                printf("Digite o combustível do carro: \n");
+                scanf("%s", &carroRegistro.combustivel);
                 fflush(stdin);
                 printf("Digite o preco do carro: \n");
                 scanf("%d", &carroRegistro.preco);
